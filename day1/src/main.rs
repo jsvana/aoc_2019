@@ -1,7 +1,14 @@
+use std::cmp::max;
+
 use anyhow::Result;
 
 fn fuel_requirement(mass: i64) -> i64 {
-    mass / 3 - 2
+    if mass <= 0 {
+        return 0;
+    }
+
+    let fuel = max(0, mass / 3 - 2);
+    fuel + fuel_requirement(fuel)
 }
 
 fn read_input(filename: &str) -> Result<Vec<i64>> {
@@ -34,10 +41,9 @@ mod tests {
     #[test]
     fn test_fuel_requirement() {
         let test_cases = vec![
-            (12, 2),
             (14, 2),
-            (1969, 654),
-            (100756, 33583),
+            (1969, 966),
+            (100756, 50346),
         ];
 
         for (input, expected) in test_cases.iter() {
