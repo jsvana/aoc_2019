@@ -73,11 +73,11 @@ fn run_instruction(program: &mut Vec<i64>, pc: usize) -> Result<InstructionResul
     }
 }
 
-fn main() -> Result<()> {
-    let mut program = read_input("input.txt")?;
+fn run_program(program: &Vec<i64>, input_a: i64, input_b: i64) -> Result<i64> {
+    let mut program = program.clone();
 
-    program[1] = 12;
-    program[2] = 2;
+    program[1] = input_a;
+    program[2] = input_b;
 
     let mut pc = 0;
 
@@ -88,7 +88,20 @@ fn main() -> Result<()> {
         }
     }
 
-    println!("Output: {}", program[0]);
+    Ok(program[0])
+}
+
+fn main() -> Result<()> {
+    let program = read_input("input.txt")?;
+
+    for i in 0..100 {
+        for j in 0..100 {
+            if run_program(&program, i, j)? == 19690720 {
+                println!("Found! ({}, {}), value is {}", i, j, 100 * i + j);
+            }
+        }
+    }
 
     Ok(())
 }
+
