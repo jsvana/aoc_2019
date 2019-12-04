@@ -48,32 +48,64 @@ impl FromStr for Distance {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq)]
 struct Point {
     x: i64,
     y: i64,
 }
 
+impl PartialEq for Point {
+    fn eq(&self, other: &Self) -> bool {
+        self.x == other.x && self.y == other.y
+    }
+}
+
 type PointMap = BTreeMap<i64, BTreeMap<i64, BTreeSet<i64>>>;
 
+struct CountResult {
+    found: bool,
+    steps: i64,
+    ending_point: Point,
+}
+
 impl Distance {
-    fn add_points(&self, points: &mut PointMap, id: i64, starting_point: &Point) -> Point {
-        for i in 1..self.magnitude + 1 {
-            let point = match self.direction {
-                Direction::Up => Point { x: starting_point.x, y: starting_point.y - i },
-                Direction::Down => Point { x: starting_point.x, y: starting_point.y + i },
-                Direction::Left => Point { x: starting_point.x - i, y: starting_point.y},
-                Direction::Right => Point { x: starting_point.x + i, y: starting_point.y},
+    fn add_points(&self, points: &mut PointMap, id: i64, starting_point: &mut Point) {
+        for _ in 1..self.magnitude + 1 {
+            match self.direction {
+                Direction::Up => starting_point.y -= 1,
+                Direction::Down => starting_point.y += 1,
+                Direction::Left => starting_point.x -= 1,
+                Direction::Right => starting_point.x += 1,
             };
 
-            points.entry(point.y).or_insert(BTreeMap::new()).entry(point.x).or_insert(BTreeSet::new()).insert(id);
+            points.entry(starting_point.y).or_insert(BTreeMap::new()).entry(starting_point.x).or_insert(BTreeSet::new()).insert(id);
+        }
+    }
+
+    fn count_steps(&self, starting_point: &Point, target_point: &Point) -> CountResult {
+        let mut found = false;
+        let mut steps = 0;
+
+        let mut point = starting_point.clone();
+        for _ in 1..self.magnitude + 1 {
+            match self.direction {
+                Direction::Up => point.y -= 1,
+                Direction::Down => point.y += 1,
+                Direction::Left => point.x -= 1,
+                Direction::Right => point.x += 1,
+            };
+
+            steps += 1;
+            if point == *target_point {
+                found = true;
+                break;
+            }
         }
 
-        match self.direction {
-            Direction::Up => Point { x: starting_point.x, y: starting_point.y - self.magnitude },
-            Direction::Down => Point { x: starting_point.x, y: starting_point.y + self.magnitude },
-            Direction::Left => Point { x: starting_point.x - self.magnitude, y: starting_point.y},
-            Direction::Right => Point { x: starting_point.x + self.magnitude, y: starting_point.y},
+        CountResult {
+            found,
+            steps,
+            ending_point: point,
         }
     }
 }
@@ -98,8 +130,23 @@ impl Line {
         let mut starting_point = Point { x: 0, y: 0 };
         points.entry(0).or_insert(BTreeMap::new()).entry(0).or_insert(BTreeSet::new()).insert(self.id);
         for part in self.parts.iter() {
-            starting_point = part.add_points(points, self.id, &starting_point);
+            part.add_points(points, self.id, &mut starting_point);
         }
+    }
+
+    fn count_steps(&self, target_point: &Point) -> Result<i64> {
+        let mut total_steps = 0;
+        let mut starting_point = Point { x: 0, y: 0 };
+        for part in self.parts.iter() {
+            let result = part.count_steps(&starting_point, target_point);
+            total_steps += result.steps;
+            if result.found {
+                return Ok(total_steps);
+            }
+            starting_point = result.ending_point;
+        }
+
+        Err(format_err!("Point not found in line"))
     }
 }
 
@@ -142,7 +189,8 @@ fn print_points(points: &PointMap, top_left: &Point, bottom_right: &Point) {
 
 fn main() -> Result<()> {
     let mut points: PointMap = BTreeMap::new();
-    for line in read_input("input.txt")?.iter() {
+    let lines = read_input("input.txt")?;
+    for line in lines.iter() {
         line.add_points(&mut points);
     }
 
@@ -160,7 +208,11 @@ fn main() -> Result<()> {
             max_y = max(*y, max_y);
 
             if ids.len() > 1 && *x != 0 && *y != 0{
-                min_distance = min(min_distance, x.abs() + y.abs());
+                let mut total_line_distance = 0;
+                for id in ids.iter() {
+                    total_line_distance += lines[*id as usize].count_steps(&Point { x: *x, y: *y })?;
+                }
+                min_distance = min(min_distance, total_line_distance);
             }
         }
     }
