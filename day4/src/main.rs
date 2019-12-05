@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 
 fn valid_password(password: i64) -> bool {
@@ -6,21 +8,25 @@ fn valid_password(password: i64) -> bool {
         digits.push(password_char.to_digit(10).unwrap() as i64);
     }
 
-    let mut last_digit = digits.get(0).unwrap();
-    let mut found_pair = false;
-    for digit in &digits[1..] {
-        if digit < last_digit {
+    let mut counts = BTreeMap::new();
+
+    counts.insert(digits[0], 1);
+
+    for i in 1..digits.len() {
+        let digit = digits[i];
+        if digit < digits[i - 1] {
             return false;
         }
-
-        if digit == last_digit {
-            found_pair = true;
-        }
-
-        last_digit = digit;
+        *counts.entry(digit).or_insert(0) += 1;
     }
 
-    found_pair
+    for count in counts.values() {
+        if *count == 2 {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn main() -> Result<()> {
