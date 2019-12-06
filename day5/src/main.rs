@@ -24,13 +24,18 @@ enum OpCode {
     Multiply,
     Input,
     Output,
+    JumpIfTrue,
+    JumpIfFalse,
+    LessThan,
+    Equals,
     Terminate,
 }
 
 impl OpCode {
     fn argument_count(&self) -> usize {
         match self {
-            OpCode::Add | OpCode::Multiply => 3,
+            OpCode::Add | OpCode::Multiply | OpCode::LessThan | OpCode::Equals => 3,
+            OpCode::JumpIfTrue | OpCode::JumpIfFalse => 2,
             OpCode::Input | OpCode::Output => 1,
             OpCode::Terminate => 0,
         }
@@ -97,6 +102,10 @@ impl Argument {
             FetchMode::Position => tape.get(self.value as usize),
         }
     }
+
+    fn get_for_set(&self) -> i64 {
+        self.value
+    }
 }
 
 #[derive(Debug)]
@@ -129,19 +138,10 @@ impl Instruction {
         .rev()
         .enumerate()
         {
-            let mode = if i == argument_count - 1 {
-                // TODO(jsvana): fix this...
-                match opcode {
-                    OpCode::Output => FetchMode::Position,
-                    _ => FetchMode::Immediate,
-                }
-            } else {
-                c.try_into()
-                    .with_context(|| format!("Failed to parse mode \"{}\"", c))?
-            };
-
             arguments.push(Argument {
-                mode,
+                mode: c
+                    .try_into()
+                    .with_context(|| format!("Failed to parse mode \"{}\"", c))?,
                 value: tape.get(offset + i + 1).unwrap(),
             })
         }
@@ -170,52 +170,37 @@ impl Instruction {
             ));
         }
 
-        /*
-        if let OpCode::Add | OpCode::Multiply | OpCode::Input = self.opcode {
-            // This is fine because we've checked the argument count above
-            if let FetchMode::Immediate = self
-                .arguments
-                .last()
-                .ok_or(format_err!(
-                    "Last argument not found for opcode {:?}",
-                    self.opcode
-                ))?
-                .mode
-            {
-                return Err(format_err!(
-                    "Non-immediate instruction passed to immediate-only instruction: {:?}",
-                    self
-                ));
-            }
-        }
-        */
-
         Ok(())
     }
 
+    fn get_argument(&self, index: usize) -> Result<&Argument> {
+        self.arguments.get(index).ok_or(format_err!(
+            "Argument {} not found for opcode {:?}",
+            index + 1,
+            self.opcode
+        ))
+    }
+
     fn get_argument_value(&self, tape: &Tape, index: usize) -> Result<i64> {
-        self.arguments
-            .get(index)
-            .ok_or(format_err!(
-                "Argument {} not found for opcode {:?}",
-                index + 1,
-                self.opcode
-            ))?
-            .get(tape)
-            .ok_or(format_err!(
-                "Argument {} for opcode {:?} is None",
-                index + 1,
-                self.opcode
-            ))
+        self.get_argument(index)?.get(tape).ok_or(format_err!(
+            "Argument {} for opcode {:?} is None",
+            index + 1,
+            self.opcode
+        ))
+    }
+
+    fn get_argument_value_for_set(&self, index: usize) -> Result<i64> {
+        Ok(self.get_argument(index)?.get_for_set())
     }
 
     fn run(&self, tape: &mut Tape) -> Result<InstructionResult> {
         debug!("{:?}", self);
+        let default_next_offset = self.position + self.opcode.argument_count() + 1;
         match self.opcode {
             OpCode::Add => {
                 let arg1 = self.get_argument_value(tape, 0)?;
                 let arg2 = self.get_argument_value(tape, 1)?;
-                let result_offset = self.get_argument_value(tape, 2)?;
+                let result_offset = self.get_argument_value_for_set(2)?;
                 let result = arg1 + arg2;
 
                 debug!(
@@ -230,12 +215,14 @@ impl Instruction {
                     )
                 })?;
 
-                Ok(InstructionResult::Continue)
+                Ok(InstructionResult::Continue {
+                    next_offset: default_next_offset,
+                })
             }
             OpCode::Multiply => {
                 let arg1 = self.get_argument_value(tape, 0)?;
                 let arg2 = self.get_argument_value(tape, 1)?;
-                let result_offset = self.get_argument_value(tape, 2)?;
+                let result_offset = self.get_argument_value_for_set(2)?;
 
                 let result = arg1 * arg2;
 
@@ -251,7 +238,9 @@ impl Instruction {
                     )
                 })?;
 
-                Ok(InstructionResult::Continue)
+                Ok(InstructionResult::Continue {
+                    next_offset: default_next_offset,
+                })
             }
             OpCode::Input => {
                 print!("Input: ");
@@ -263,7 +252,7 @@ impl Instruction {
                     .read_line(&mut input)
                     .context("Failed to read input")?;
 
-                let result_offset = self.get_argument_value(tape, 0)?;
+                let result_offset = self.get_argument_value_for_set(0)?;
 
                 let value = input
                     .trim()
@@ -279,12 +268,76 @@ impl Instruction {
                     )
                 })?;
 
-                Ok(InstructionResult::Continue)
+                Ok(InstructionResult::Continue {
+                    next_offset: default_next_offset,
+                })
             }
             OpCode::Output => {
                 println!("[OUTPUT] {}", self.get_argument_value(tape, 0)?);
 
-                Ok(InstructionResult::Continue)
+                Ok(InstructionResult::Continue {
+                    next_offset: default_next_offset,
+                })
+            }
+            OpCode::JumpIfTrue => {
+                let arg1 = self.get_argument_value(tape, 0)?;
+                let arg2 = self.get_argument_value(tape, 1)?;
+
+                Ok(InstructionResult::Continue {
+                    next_offset: if arg1 == 0 {
+                        default_next_offset
+                    } else {
+                        arg2 as usize
+                    },
+                })
+            }
+            OpCode::JumpIfFalse => {
+                let arg1 = self.get_argument_value(tape, 0)?;
+                let arg2 = self.get_argument_value(tape, 1)?;
+
+                Ok(InstructionResult::Continue {
+                    next_offset: if arg1 == 0 {
+                        arg2 as usize
+                    } else {
+                        default_next_offset
+                    },
+                })
+            }
+            OpCode::LessThan => {
+                let arg1 = self.get_argument_value(tape, 0)?;
+                let arg2 = self.get_argument_value(tape, 1)?;
+                let result_offset = self.get_argument_value_for_set(2)?;
+
+                let value = if arg1 < arg2 { 1 } else { 0 };
+
+                tape.set(result_offset as usize, value).with_context(|| {
+                    format!(
+                        "Failed to set less than value {} to tape index {}",
+                        value, result_offset
+                    )
+                })?;
+
+                Ok(InstructionResult::Continue {
+                    next_offset: default_next_offset,
+                })
+            }
+            OpCode::Equals => {
+                let arg1 = self.get_argument_value(tape, 0)?;
+                let arg2 = self.get_argument_value(tape, 1)?;
+                let result_offset = self.get_argument_value_for_set(2)?;
+
+                let value = if arg1 == arg2 { 1 } else { 0 };
+
+                tape.set(result_offset as usize, value).with_context(|| {
+                    format!(
+                        "Failed to set less than value {} to tape index {}",
+                        value, result_offset
+                    )
+                })?;
+
+                Ok(InstructionResult::Continue {
+                    next_offset: default_next_offset,
+                })
             }
             OpCode::Terminate => Ok(InstructionResult::Terminate),
         }
@@ -300,6 +353,10 @@ impl TryFrom<i64> for OpCode {
             2 => Ok(OpCode::Multiply),
             3 => Ok(OpCode::Input),
             4 => Ok(OpCode::Output),
+            5 => Ok(OpCode::JumpIfTrue),
+            6 => Ok(OpCode::JumpIfFalse),
+            7 => Ok(OpCode::LessThan),
+            8 => Ok(OpCode::Equals),
             99 => Ok(OpCode::Terminate),
             _ => Err(format_err!("Unknown opcode {}", value)),
         }
@@ -318,7 +375,7 @@ impl TryFrom<&str> for OpCode {
 }
 
 enum InstructionResult {
-    Continue,
+    Continue { next_offset: usize },
     Terminate,
 }
 
@@ -336,7 +393,9 @@ fn main() -> Result<()> {
             .run(&mut tape)
             .with_context(|| format!("Failed to run instruction at offset {}", pc))?
         {
-            InstructionResult::Continue => pc += instruction.opcode.argument_count() + 1,
+            InstructionResult::Continue { next_offset } => {
+                pc = next_offset;
+            }
             InstructionResult::Terminate => break,
         }
     }
