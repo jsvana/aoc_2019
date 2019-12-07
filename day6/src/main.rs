@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::convert::{TryFrom, TryInto};
 
 use anyhow::{format_err, Error, Result};
@@ -9,14 +9,14 @@ type Orbits = BTreeMap<String, OrbitInfo>;
 #[derive(Debug, PartialEq, Eq)]
 struct Orbit {
     center_of_mass: String,
-    outer_planet: String,
+    planet: String,
 }
 
 #[derive(Debug)]
 struct OrbitInfo {
     distance_from_center: usize,
     total_distances: usize,
-    outer_planets: BTreeSet<String>,
+    planets: BTreeSet<String>,
 }
 
 impl OrbitInfo {
@@ -24,12 +24,12 @@ impl OrbitInfo {
         OrbitInfo {
             distance_from_center: 0,
             total_distances: 0,
-            outer_planets: BTreeSet::new(),
+            planets: BTreeSet::new(),
         }
     }
 
-    fn add_outer_planet(&mut self, outer_planet: &str) {
-        self.outer_planets.insert(outer_planet.to_string());
+    fn add_planet(&mut self, planet: &str) {
+        self.planets.insert(planet.to_string());
     }
 }
 
@@ -45,9 +45,9 @@ impl TryFrom<&str> for Orbit {
         ))?;
 
         match parts.get(1) {
-            Some(outer_planet) => Ok(Orbit {
+            Some(planet) => Ok(Orbit {
                 center_of_mass: center_of_mass.to_string(),
-                outer_planet: outer_planet.to_string(),
+                planet: planet.to_string(),
             }),
             None => Err(format_err!(
                 "Orbit was not passed an outer planet (passed \"{}\")",
@@ -65,11 +65,12 @@ fn string_to_orbits(input: &str) -> Result<Orbits> {
         orbits
             .entry(orbit.center_of_mass.clone())
             .or_insert(OrbitInfo::new())
-            .add_outer_planet(&orbit.outer_planet);
+            .add_planet(&orbit.planet);
 
         orbits
-            .entry(orbit.outer_planet.clone())
-            .or_insert(OrbitInfo::new());
+            .entry(orbit.planet.clone())
+            .or_insert(OrbitInfo::new())
+            .add_planet(&orbit.center_of_mass);
     }
     Ok(orbits)
 }
@@ -80,47 +81,67 @@ fn read_input(filename: &str) -> Result<Orbits> {
     string_to_orbits(&data)
 }
 
-fn add_counts(orbits: &mut Orbits, node: &str, distance: usize) {
-    debug!("CHECKING {}", node);
-    if let Some(info) = orbits.get_mut(node) {
-        info.distance_from_center = distance;
+fn shortest_path_length(orbits: &Orbits, start: &str, end: &str) -> Result<usize> {
+    let mut to_check = VecDeque::new();
+    to_check.push_back(start);
 
-        let planets_to_check = info.outer_planets.clone();
-        for outer_planet in planets_to_check.iter() {
-            add_counts(orbits, &outer_planet, distance + 1);
-        }
-    }
-}
+    let mut counts = BTreeMap::new();
 
-fn sum_counts(orbits: &Orbits, node: &str) -> usize {
-    let mut sum = 0;
-
-    if let Some(info) = orbits.get(node) {
-        if info.distance_from_center > 0 {
-            sum += info.distance_from_center;
-        }
-
-        let planets_to_check = info.outer_planets.clone();
-        for outer_planet in planets_to_check.iter() {
-            sum += sum_counts(orbits, &outer_planet);
-        }
+    for planet in orbits.keys() {
+        counts.insert(planet.to_string(), std::usize::MAX);
     }
 
-    sum
+    counts.insert(start.to_string(), 0);
+
+    let mut visited = BTreeSet::new();
+
+    while !to_check.is_empty() {
+        let next = to_check.pop_front().unwrap();
+        debug!("Checking {}", next);
+
+        if visited.contains(next) {
+            debug!("Already visted {}", next);
+            continue;
+        }
+
+        visited.insert(next);
+
+        let count = counts
+            .get(next)
+            .ok_or(format_err!("Count not found for {}", next))?;
+        let next_hop = count + 1;
+
+        let info = orbits
+            .get(next)
+            .ok_or(format_err!("Orbit info not found for {}", next))?;
+
+        for planet in info.planets.iter() {
+            let next_planet_count = *counts
+                .get(planet)
+                .ok_or(format_err!("Comparison count not found for {}", planet))?;
+            if next_hop < next_planet_count {
+                counts.insert(planet.to_string(), next_hop);
+                to_check.push_back(planet);
+            }
+        }
+    }
+
+    Ok(*counts
+        .get(end)
+        .ok_or(format_err!("End count not found for {}", end))?)
 }
 
 fn main() -> Result<()> {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let mut orbits = read_input("input.txt")?;
+    let orbits = read_input("input.txt")?;
 
-    debug!("ORBITS: {:?}", orbits);
+    debug!("Orbits: {:?}", orbits);
 
-    add_counts(&mut orbits, "COM", 0);
-
-    debug!("ORBITS AFTER TOTAL SIZE: {:?}", orbits);
-
-    info!("Total count: {}", sum_counts(&orbits, "COM"));
+    info!(
+        "Shortest path: {}",
+        shortest_path_length(&orbits, "YOU", "SAN")?
+    );
 
     Ok(())
 }
@@ -136,7 +157,7 @@ mod tests {
             orbit,
             Orbit {
                 center_of_mass: "A".to_string(),
-                outer_planet: "B".to_string(),
+                planet: "B".to_string(),
             }
         );
         Ok(())
