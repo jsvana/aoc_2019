@@ -3,7 +3,7 @@ use std::convert::{TryFrom, TryInto};
 
 use anyhow::{format_err, Context, Error, Result};
 use itertools::Itertools;
-use log::{debug, info};
+use log::{debug, info, trace};
 
 fn string_to_vec(input: &str) -> Result<Tape> {
     let mut ret = Vec::new();
@@ -64,7 +64,7 @@ impl Tape {
             return Err(format_err!("Attempted to set offset at a larger offset than the tape contains (attempted set of {}, length {})", offset, self.program.len()));
         }
 
-        debug!("[SET] [{}] = {}", offset, value);
+        trace!("[SET] [{}] = {}", offset, value);
 
         self.program[offset] = value;
 
@@ -200,7 +200,7 @@ impl Instruction {
         inputs: &mut VecDeque<i64>,
         outputs: &mut VecDeque<i64>,
     ) -> Result<InstructionResult> {
-        debug!("{:?}", self);
+        trace!("{:?}", self);
         let default_next_offset = self.position + self.opcode.argument_count() + 1;
         match self.opcode {
             OpCode::Add => {
@@ -209,9 +209,12 @@ impl Instruction {
                 let result_offset = self.get_argument_value_for_set(2)?;
                 let result = arg1 + arg2;
 
-                debug!(
+                trace!(
                     "[ADD] {} + {} = {}, [{}]",
-                    arg1, arg2, result, result_offset
+                    arg1,
+                    arg2,
+                    result,
+                    result_offset
                 );
 
                 tape.set(result_offset as usize, result).with_context(|| {
@@ -232,9 +235,12 @@ impl Instruction {
 
                 let result = arg1 * arg2;
 
-                debug!(
+                trace!(
                     "[MUL] {} * {} = {}, [{}]",
-                    arg1, arg2, result, result_offset
+                    arg1,
+                    arg2,
+                    result,
+                    result_offset
                 );
 
                 tape.set(result_offset as usize, result).with_context(|| {
@@ -254,7 +260,7 @@ impl Instruction {
                     .ok_or(format_err!("No input values left to consume"))?;
                 let result_offset = self.get_argument_value_for_set(0)?;
 
-                debug!("[INP] {} -> [{}]", value, result_offset);
+                trace!("[INP] {} -> [{}]", value, result_offset);
 
                 tape.set(result_offset as usize, value).with_context(|| {
                     format!(
@@ -376,27 +382,57 @@ enum InstructionResult {
 
 struct Program {
     tape: Tape,
-    inputs: VecDeque<i64>,
     pc: usize,
 }
 
 impl Program {
-    fn new(tape: &Tape, inputs: &VecDeque<i64>) -> Self {
+    fn new(tape: &Tape) -> Self {
         Program {
             tape: tape.clone(),
-            inputs: inputs.clone(),
             pc: 0,
         }
     }
 
-    fn run(&mut self) -> Result<VecDeque<i64>> {
+    fn run_to_next_output(&mut self, inputs: &mut VecDeque<i64>) -> Result<Option<i64>> {
+        let mut outputs = VecDeque::new();
+
+        let mut instruction_count = 0;
+        loop {
+            let starting_len = outputs.len();
+            let instruction = Instruction::new(&self.tape, self.pc)
+                .with_context(|| format!("Failed to build instruction at offset {}", self.pc))?;
+
+            match instruction
+                .run(&mut self.tape, inputs, &mut outputs)
+                .with_context(|| format!("Failed to run instruction at offset {}", self.pc))?
+            {
+                InstructionResult::Continue { next_offset } => {
+                    self.pc = next_offset;
+                    if outputs.len() > starting_len {
+                        break;
+                    }
+                }
+                InstructionResult::Terminate => break,
+            }
+
+            instruction_count += 1;
+        }
+
+        debug!("Ran {} instruction(s)", instruction_count);
+
+        Ok(outputs.back().cloned())
+    }
+
+    fn run(&mut self, inputs: &mut VecDeque<i64>) -> Result<VecDeque<i64>> {
+        // TODO(jsvana): make this not duplicated
         let mut outputs = VecDeque::new();
 
         loop {
             let instruction = Instruction::new(&self.tape, self.pc)
                 .with_context(|| format!("Failed to build instruction at offset {}", self.pc))?;
+
             match instruction
-                .run(&mut self.tape, &mut self.inputs, &mut outputs)
+                .run(&mut self.tape, inputs, &mut outputs)
                 .with_context(|| format!("Failed to run instruction at offset {}", self.pc))?
             {
                 InstructionResult::Continue { next_offset } => {
@@ -411,18 +447,39 @@ impl Program {
 }
 
 fn run_phase_sequence(tape: &Tape, sequence: &Vec<i64>) -> Result<i64> {
-    let mut input = 0;
+    let mut input_sequence = VecDeque::new();
+    let mut programs = Vec::new();
+
     for start in sequence.iter() {
+        input_sequence.push_back(*start);
+        programs.push(Program::new(&tape));
+    }
+
+    let mut input = 0;
+    let mut i = 0;
+    loop {
         let mut inputs = VecDeque::new();
-        inputs.push_back(*start);
+        if !input_sequence.is_empty() {
+            inputs.push_back(input_sequence.pop_front().unwrap());
+        }
         inputs.push_back(input);
+        debug!("PROG {}", i);
+        debug!("INPT {:?}", inputs);
 
-        let mut program = Program::new(&tape, &mut inputs);
-        let mut outputs = program.run()?;
+        let program = programs.get_mut(i).unwrap();
 
-        input = outputs
-            .pop_back()
-            .ok_or(format_err!("No outputs to fetch from start {}", start))?;
+        let output = program.run_to_next_output(&mut inputs.clone())?;
+
+        debug!("OUTP {:?}", output);
+
+        match output {
+            Some(output) => input = output,
+            None => {
+                break;
+            }
+        }
+
+        i = (i + 1) % sequence.len();
     }
 
     Ok(input)
@@ -434,7 +491,7 @@ fn main() -> Result<()> {
     let tape = read_input("input.txt")?;
 
     let mut max = std::i64::MIN;
-    for sequence in (0..5).permutations(5) {
+    for sequence in (5..10).permutations(5) {
         let output = run_phase_sequence(&tape, &sequence)?;
 
         if output > max {
