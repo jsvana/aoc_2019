@@ -504,7 +504,7 @@ fn main() -> Result<()> {
     let mut program = Program::new(&tape);
 
     let mut inputs = VecDeque::new();
-    inputs.push_back(1);
+    inputs.push_back(2);
 
     for output in program.run(&mut inputs)? {
         info!("{}", output);
