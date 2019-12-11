@@ -135,6 +135,8 @@ fn main() -> Result<()> {
 
     let mut robot = Robot::new(brain);
 
+    map.set_to_char(&robot.position, '#');
+
     let mut running = true;
 
     while running {
@@ -147,6 +149,8 @@ fn main() -> Result<()> {
     //println!("Map: {:?}", map);
 
     println!("Total painted: {}", count_painted_points(&map));
+
+    map.print();
 
     Ok(())
 }
