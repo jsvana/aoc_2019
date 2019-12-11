@@ -3,7 +3,24 @@ use std::collections::BTreeSet;
 use std::f64::consts::PI;
 
 use anyhow::Result;
-use log::{debug, info};
+use log::{debug, info, trace};
+
+#[derive(Clone, Debug)]
+struct Degree(f64);
+
+impl From<Degree> for Radian {
+    fn from(degree: Degree) -> Radian {
+        Radian(degree.0 * PI / 180.0)
+    }
+}
+
+struct Radian(f64);
+
+impl From<Radian> for Degree {
+    fn from(radian: Radian) -> Degree {
+        Degree(radian.0 * 180.0 / PI)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Point {
@@ -52,11 +69,11 @@ impl Point {
         }
     }
 
-    fn angle_to(&self, other: &Point) -> f64 {
+    fn angle_to(&self, other: &Point) -> Degree {
         let delta_x = (other.x - self.x) as f64;
         let delta_y = (other.y - self.y) as f64;
 
-        delta_y.atan2(delta_x)
+        Radian(delta_y.atan2(delta_x)).into()
     }
 }
 
@@ -87,6 +104,18 @@ impl Map {
 
         Some(self.data[point.y as usize][point.x as usize])
     }
+
+    fn set_to_char(&mut self, point: &Point, ch: char) {
+        if !self.contains(point) {
+            return;
+        }
+
+        self.data[point.y as usize][point.x as usize] = ch;
+    }
+
+    fn empty(&mut self, point: &Point) {
+        self.set_to_char(point, '.');
+    }
 }
 
 fn count_ray(map: &Map, origin: &Point, angle: &Point) -> BTreeSet<Point> {
@@ -96,7 +125,7 @@ fn count_ray(map: &Map, origin: &Point, angle: &Point) -> BTreeSet<Point> {
 
     while map.contains(&iter_point) {
         if map.get(&iter_point).unwrap() == '#' {
-            debug!("  FOUND ({}, {})", iter_point.x, iter_point.y);
+            trace!("  FOUND ({}, {})", iter_point.x, iter_point.y);
             points.insert(iter_point);
             break;
         }
@@ -122,7 +151,7 @@ fn count_angle(map: &Map, origin: &Point, angle: &Point) -> BTreeSet<Point> {
 fn get_visible_asteroids(map: &Map, point: &Point, angles: &BTreeSet<Point>) -> BTreeSet<Point> {
     let mut total_count = BTreeSet::new();
 
-    debug!(
+    trace!(
         "POINT ({}, {}), {} angles to check",
         point.x,
         point.y,
@@ -166,9 +195,13 @@ fn build_angles(bounds: &Point) -> BTreeSet<Point> {
             let normalized_x = (x as usize / divisor) as i32;
             let normalized_y = (y as usize / divisor) as i32;
 
-            debug!(
+            trace!(
                 "({}, {}): {}, ({}, {})",
-                x, y, divisor, normalized_x, normalized_y
+                x,
+                y,
+                divisor,
+                normalized_x,
+                normalized_y
             );
 
             if normalized_x != 0 && normalized_y != 0 {
@@ -183,53 +216,130 @@ fn build_angles(bounds: &Point) -> BTreeSet<Point> {
     angles
 }
 
-fn radians_to_degrees(radians: f64) -> f64 {
-    radians / PI * 180.0
-}
-
+#[derive(Clone, Debug)]
 struct PointAngle {
     point: Point,
-    angle: f64,
+    angle: Degree,
 }
 
-fn count_and_destroy_asteroids(map: &Map, index: usize) -> usize {
+fn count_and_destroy_asteroids(map: &mut Map, index: usize) -> usize {
     let angles = build_angles(&map.bounds);
 
+    info!("Finding max point");
     let mut max_count = 0;
-    let mut max_set = BTreeSet::new();
     let mut max_point = Point { x: 0, y: 0 };
     for y in 0..map.bounds.y {
         for x in 0..map.bounds.x {
             let point = Point { x, y };
             if map.get(&point).unwrap() == '#' {
-                debug!("Checking ({}, {})", x, y);
+                trace!("Checking ({}, {})", x, y);
                 let visible_asteroids = get_visible_asteroids(map, &point, &angles);
                 if visible_asteroids.len() > max_count {
                     max_count = visible_asteroids.len();
-                    max_set = visible_asteroids;
                     max_point = point;
                 }
             }
         }
     }
 
+    println!("MAX COUNT: {}", max_count);
     // Destroy one point, recalculate points and angles, sort angles
     info!("Max point at ({}, {})", max_point.x, max_point.y);
 
+    let mut last_point = None;
+    let mut last_angle = Degree(-0.0001);
+    for i in 0..index {
+        info!("Destroying index {}", i);
+        let last_point_angle = destroy_round(map, &max_point, &angles, last_angle, i);
+
+        last_point = Some(last_point_angle.point);
+        last_angle = last_point_angle.angle;
+
+        info!("Index {} destroyed, {:?} {}", i, last_point, last_angle.0);
+    }
+
+    let point = last_point.unwrap();
+    point.x as usize * 100 + point.y as usize
+}
+
+fn destroy_round(
+    map: &mut Map,
+    max_point: &Point,
+    angles: &BTreeSet<Point>,
+    last_angle: Degree,
+    round: usize,
+) -> PointAngle {
+    let visible_points = get_visible_asteroids(map, max_point, angles);
+
+    /*
+    // TOO MANY VISIBLE POINTS
+    for point in visible_points.iter() {
+        map.set_to_char(point, '*');
+    }
+
+    print_map(map);
+    panic!("asdf");
+    */
+
     let mut all_points = Vec::new();
-    for point in max_set.iter() {
+    for point in visible_points.iter() {
+        let mut angle = max_point.angle_to(point);
+        angle.0 += 90.0;
+        if angle.0 < 0.0 {
+            angle.0 += 360.0;
+        }
+
+        angle.0 %= 360.0;
         all_points.push(PointAngle {
             point: point.clone(),
-            angle: radians_to_degrees(max_point.angle_to(point)) + 90.0,
+            angle,
         });
     }
 
-    all_points.sort_by(|a, b| b.angle.partial_cmp(&a.angle).unwrap());
+    all_points.sort_by(|a, b| a.angle.0.partial_cmp(&b.angle.0).unwrap());
 
-    max_count
+    let mut inner_last_angle = last_angle.clone();
+
+    let mut start_index = None;
+    for (i, point) in all_points.iter().enumerate() {
+        // This won't work
+        if inner_last_angle.0 > 0.0 && point.angle.0 < 0.0 {
+            if point.angle.0 + 360.0 > inner_last_angle.0 {
+                start_index = Some(i);
+                break;
+            }
+        }
+        if point.angle.0 > inner_last_angle.0 {
+            start_index = Some(i);
+            break;
+        }
+    }
+
+    if let None = start_index {
+        println!("COULDN'T FIND BEFORE, TRYING AT 0");
+        inner_last_angle.0 = 0.0;
+        for (i, point) in all_points.iter().enumerate() {
+            // This won't work
+            if inner_last_angle.0 > 0.0 && point.angle.0 < 0.0 {
+                if point.angle.0 + 360.0 > inner_last_angle.0 {
+                    start_index = Some(i);
+                    break;
+                }
+            }
+            if point.angle.0 > inner_last_angle.0 {
+                start_index = Some(i);
+                break;
+            }
+        }
+    }
+
+    //map.empty(&all_points[start_index].point);
+
+    all_points[start_index.unwrap()].clone()
 }
 
 fn print_map(map: &Map) {
+    debug!("Printing map");
     for row in map.data.iter() {
         for ch in row.iter() {
             print!("{}", ch);
@@ -255,11 +365,11 @@ fn read_input(filename: &str) -> Result<Map> {
 fn main() -> Result<()> {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let map = read_input("test.txt")?;
+    let mut map = read_input("input.txt")?;
 
     print_map(&map);
 
-    let count = count_and_destroy_asteroids(&map, 200);
+    let count = count_and_destroy_asteroids(&mut map, 200);
     info!("Max count: {}", count);
 
     Ok(())
