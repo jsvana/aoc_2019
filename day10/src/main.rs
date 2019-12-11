@@ -1,5 +1,6 @@
 use std::cmp::{max, min, Ordering};
 use std::collections::BTreeSet;
+use std::f64::consts::PI;
 
 use anyhow::Result;
 use log::{debug, info};
@@ -49,6 +50,13 @@ impl Point {
             x: -self.x,
             y: -self.y,
         }
+    }
+
+    fn angle_to(&self, other: &Point) -> f64 {
+        let delta_x = (other.x - self.x) as f64;
+        let delta_y = (other.y - self.y) as f64;
+
+        delta_y.atan2(delta_x)
     }
 }
 
@@ -111,7 +119,7 @@ fn count_angle(map: &Map, origin: &Point, angle: &Point) -> BTreeSet<Point> {
 }
 
 // Check those that can't reduce further (2, 3), (1, 2)
-fn count_visible_asteroids(map: &Map, point: &Point, angles: &BTreeSet<Point>) -> usize {
+fn get_visible_asteroids(map: &Map, point: &Point, angles: &BTreeSet<Point>) -> BTreeSet<Point> {
     let mut total_count = BTreeSet::new();
 
     debug!(
@@ -124,7 +132,7 @@ fn count_visible_asteroids(map: &Map, point: &Point, angles: &BTreeSet<Point>) -
         total_count.append(&mut count_angle(map, point, angle));
     }
 
-    total_count.len()
+    total_count
 }
 
 // Taken from RosettaCode
@@ -175,21 +183,48 @@ fn build_angles(bounds: &Point) -> BTreeSet<Point> {
     angles
 }
 
-fn count_asteroids(map: &Map) -> usize {
+fn radians_to_degrees(radians: f64) -> f64 {
+    radians / PI * 180.0
+}
+
+struct PointAngle {
+    point: Point,
+    angle: f64,
+}
+
+fn count_and_destroy_asteroids(map: &Map, index: usize) -> usize {
     let angles = build_angles(&map.bounds);
 
     let mut max_count = 0;
+    let mut max_set = BTreeSet::new();
+    let mut max_point = Point { x: 0, y: 0 };
     for y in 0..map.bounds.y {
         for x in 0..map.bounds.x {
             let point = Point { x, y };
             if map.get(&point).unwrap() == '#' {
                 debug!("Checking ({}, {})", x, y);
-                let count = count_visible_asteroids(map, &point, &angles);
-                debug!("({}, {}): {}", x, y, count);
-                max_count = max(max_count, count);
+                let visible_asteroids = get_visible_asteroids(map, &point, &angles);
+                if visible_asteroids.len() > max_count {
+                    max_count = visible_asteroids.len();
+                    max_set = visible_asteroids;
+                    max_point = point;
+                }
             }
         }
     }
+
+    // Destroy one point, recalculate points and angles, sort angles
+    info!("Max point at ({}, {})", max_point.x, max_point.y);
+
+    let mut all_points = Vec::new();
+    for point in max_set.iter() {
+        all_points.push(PointAngle {
+            point: point.clone(),
+            angle: radians_to_degrees(max_point.angle_to(point)) + 90.0,
+        });
+    }
+
+    all_points.sort_by(|a, b| b.angle.partial_cmp(&a.angle).unwrap());
 
     max_count
 }
@@ -224,7 +259,7 @@ fn main() -> Result<()> {
 
     print_map(&map);
 
-    let count = count_asteroids(&map);
+    let count = count_and_destroy_asteroids(&map, 200);
     info!("Max count: {}", count);
 
     Ok(())
