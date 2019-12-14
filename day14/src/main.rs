@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::str::FromStr;
 
@@ -113,12 +113,6 @@ impl FromStr for Reaction {
     }
 }
 
-#[derive(Debug)]
-struct OreCost {
-    unused: BTreeMap<String, u32>,
-    ore_count: u32,
-}
-
 fn read_input(filename: &str) -> Result<Vec<Reaction>> {
     let file_str = std::fs::read_to_string(filename)?;
 
@@ -137,134 +131,106 @@ fn build_reaction_map(reactions: &Vec<Reaction>) -> BTreeMap<String, Reaction> {
     reaction_map
 }
 
-fn lowest_ore_cost_for_node(
-    component_name: &str,
-    quantity: u32,
-    reaction_map: &BTreeMap<String, Reaction>,
-    indent: usize,
-    //costs: &mut BTreeMap<String, OreCost>,
-) -> OreCost {
-    let mut min_ore_cost = OreCost {
-        unused: BTreeMap::new(),
-        ore_count: std::u32::MAX,
-    };
+fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
+    let mut needed = BTreeMap::new();
+    needed.insert("FUEL", 1);
 
-    let reaction = reaction_map.get(component_name).unwrap();
-    let mut total_cost = 0;
-    let mut unused = BTreeMap::new();
-    for inner_component in reaction.components.iter() {
-        if inner_component.name == "ORE" {
-            total_cost += inner_component.quantity;
-        } else {
+    let mut to_visit = VecDeque::new();
+    // Should this be depth- or breadth-first?
+    to_visit.push_front("FUEL");
+
+    let mut extra = BTreeMap::new();
+
+    while !to_visit.is_empty() {
+        let next = to_visit.pop_front().unwrap();
+
+        if next == "ORE" {
+            continue;
+        }
+
+        debug!("Checking {}", next);
+
+        let quantity_needed = match needed.get(next) {
+            Some(quantity) => *quantity,
+            None => break,
+        };
+        needed.remove(next);
+
+        let reaction = reaction_map.get(next).unwrap();
+
+        let output = reaction.result.quantity;
+        let multiplier = (quantity_needed as f32 / output as f32).ceil() as u32;
+
+        /*
+        if next == "A" {
+            println!("YO GENERATED {} A, NEEDED {}",
+        }
+        */
+
+        /*
+        if quantity_needed < output {
+            let extra_generated = output - quantity_needed;
+            debug!("Generated {} extra {}", extra_generated, next);
+            *extra.entry(next.to_string()).or_insert(0) += extra_generated;
+        }
+        */
+
+        debug!(
+            "Generated {} {}, multiplier {}",
+            output * multiplier,
+            next,
+            multiplier
+        );
+
+        let quantity_generated = output * multiplier;
+        if quantity_generated < quantity_needed {
             debug!(
-                "{:width$}Need {} {}, recursing",
-                " ",
-                quantity,
-                inner_component.name,
-                width = indent,
+                "WAT {}, needed {} generated {}",
+                next, quantity_needed, quantity_generated
             );
+        }
+        *extra.entry(next.to_string()).or_insert(0) += quantity_generated - quantity_needed;
 
-            let mut extra = *unused.get(&inner_component.name).unwrap_or(&0);
+        for component in reaction.components.iter() {
+            to_visit.push_front(&component.name);
 
-            let mut required = inner_component.quantity;
-
-            if extra > 0 {
-                if required <= extra {
-                    debug!(
-                        "{:width$}Using some extra {} ({} used, {} total)",
-                        " ",
-                        inner_component.name,
-                        required,
-                        extra,
-                        width = indent,
-                    );
-
-                    extra -= required;
-                    required = 0;
-
-                    *unused.entry(inner_component.name.to_string()).or_insert(0) = extra;
+            let mut component_needed = component.quantity * multiplier;
+            let mut component_extra = *extra.get(&component.name).unwrap_or(&0);
+            debug!("Need {}", component.name);
+            if component_extra > 0 {
+                debug!("Have extra {}", component.name);
+                if component_needed >= component_extra {
+                    debug!("Using all extra {}", component.name);
+                    component_needed -= component_extra;
+                    component_extra = 0;
                 } else {
-                    debug!(
-                        "{:width$}Using all extra {} ({} total)",
-                        " ",
-                        inner_component.name,
-                        extra,
-                        width = indent,
-                    );
-
-                    required -= extra;
-
-                    *unused.entry(inner_component.name.to_string()).or_insert(0) = 0;
+                    debug!("Using {} extra {}", component_needed, component.name);
+                    component_extra -= component_needed;
+                    component_needed = 0;
                 }
             }
 
-            if required > 0 {
-                let cost = lowest_ore_cost_for_node(
-                    &inner_component.name,
-                    required,
-                    reaction_map,
-                    indent + 2,
-                );
+            debug!("Still need {} {}", component_needed, component.name);
 
-                total_cost += cost.ore_count;
-                for (extra_name, extra_quantity) in cost.unused.iter() {
-                    debug!(
-                        "{:width$}Found {} extra {}",
-                        " ",
-                        extra_quantity,
-                        extra_name,
-                        width = indent
-                    );
-                    *unused.entry(extra_name.to_string()).or_insert(0) += extra_quantity;
-                }
-
-                debug!(
-                    "{:width$}REQUIRED {} {}",
-                    " ",
-                    required,
-                    component_name,
-                    width = indent
-                );
-            }
+            extra.insert(component.name.clone(), component_extra);
+            *needed.entry(&component.name).or_insert(0) += component_needed;
         }
     }
 
-    if reaction.result.quantity > quantity {
-        *unused.entry(component_name.to_string()).or_insert(0) +=
-            reaction.result.quantity - quantity;
-    }
+    println!("EXTRA: {:?}", extra);
 
-    if total_cost < min_ore_cost.ore_count {
-        min_ore_cost = OreCost {
-            ore_count: total_cost,
-            unused,
-        };
-    }
-
-    debug!(
-        "{:width$}Required {} {}. Ore cost: {}",
-        " ",
-        quantity,
-        component_name,
-        min_ore_cost.ore_count,
-        width = indent,
-    );
-
-    min_ore_cost
+    *needed.get("ORE").unwrap()
 }
 
 fn main() -> Result<()> {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let reactions = read_input("test1.txt")?;
+    let reactions = read_input("test5.txt")?;
 
     let reaction_map = build_reaction_map(&reactions);
-    println!("{:?}", reaction_map);
+    //println!("{:?}", reaction_map);
 
-    println!(
-        "Lowest cost: {:?}",
-        lowest_ore_cost_for_node("FUEL", 1, &reaction_map, 0)
-    );
+    println!("Lowest cost: {:?}", lowest_ore_cost_for_fuel(&reaction_map));
 
     Ok(())
 }
