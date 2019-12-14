@@ -424,9 +424,15 @@ enum InstructionResult {
     Terminate,
 }
 
+pub enum ProgramState {
+    Running,
+    Terminated,
+}
+
 pub struct Program {
     tape: Tape,
     pc: usize,
+    state: ProgramState,
 }
 
 impl Program {
@@ -434,6 +440,7 @@ impl Program {
         Program {
             tape: tape.clone(),
             pc: 0,
+            state: ProgramState::Running,
         }
     }
 
@@ -460,7 +467,10 @@ impl Program {
                         break;
                     }
                 }
-                InstructionResult::Terminate => break,
+                InstructionResult::Terminate => {
+                    self.state = ProgramState::Terminated;
+                    break;
+                }
             }
 
             instruction_count += 1;
@@ -469,6 +479,45 @@ impl Program {
         debug!("Ran {} instruction(s)", instruction_count);
 
         Ok(outputs.back().cloned())
+    }
+
+    pub fn run_to_next_input(&mut self, inputs: &mut VecDeque<i64>) -> Result<VecDeque<i64>> {
+        let mut outputs = VecDeque::new();
+
+        let mut instruction_count = 0;
+        loop {
+            let instruction = Instruction::new(&self.tape, self.pc)
+                .with_context(|| format!("Failed to build instruction at offset {}", self.pc))?;
+
+            if let OpCode::Input = instruction.opcode {
+                if inputs.len() == 0 {
+                    break;
+                }
+            }
+
+            match instruction
+                .run(&mut self.tape, inputs, &mut outputs)
+                .with_context(|| format!("Failed to run instruction at offset {}", self.pc))?
+            {
+                InstructionResult::Continue {
+                    next_offset,
+                    relative_base,
+                } => {
+                    self.pc = next_offset;
+                    self.tape.set_relative_base(relative_base);
+                }
+                InstructionResult::Terminate => {
+                    self.state = ProgramState::Terminated;
+                    break;
+                }
+            }
+
+            instruction_count += 1;
+        }
+
+        debug!("Ran {} instruction(s)", instruction_count);
+
+        Ok(outputs.clone())
     }
 
     pub fn run(&mut self, inputs: &mut VecDeque<i64>) -> Result<VecDeque<i64>> {
@@ -490,11 +539,24 @@ impl Program {
                     self.pc = next_offset;
                     self.tape.set_relative_base(relative_base);
                 }
-                InstructionResult::Terminate => break,
+                InstructionResult::Terminate => {
+                    self.state = ProgramState::Terminated;
+                    break;
+                }
             }
         }
 
         Ok(outputs)
+    }
+
+    pub fn get_state(&self) -> &ProgramState {
+        &self.state
+    }
+
+    pub fn set_memory_value(&mut self, location: usize, value: i64) -> Result<()> {
+        self.tape.set(location, value)?;
+
+        Ok(())
     }
 }
 
