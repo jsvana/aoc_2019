@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::str::FromStr;
 
@@ -136,7 +136,6 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
     needed.insert("FUEL", 1);
 
     let mut to_visit = VecDeque::new();
-    // Should this be depth- or breadth-first?
     to_visit.push_front("FUEL");
 
     let mut extra = BTreeMap::new();
@@ -154,26 +153,11 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
             Some(quantity) => *quantity,
             None => break,
         };
-        needed.remove(next);
 
         let reaction = reaction_map.get(next).unwrap();
 
         let output = reaction.result.quantity;
         let multiplier = (quantity_needed as f32 / output as f32).ceil() as u32;
-
-        /*
-        if next == "A" {
-            println!("YO GENERATED {} A, NEEDED {}",
-        }
-        */
-
-        /*
-        if quantity_needed < output {
-            let extra_generated = output - quantity_needed;
-            debug!("Generated {} extra {}", extra_generated, next);
-            *extra.entry(next.to_string()).or_insert(0) += extra_generated;
-        }
-        */
 
         debug!(
             "Generated {} {}, multiplier {}",
@@ -183,17 +167,16 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
         );
 
         let quantity_generated = output * multiplier;
-        if quantity_generated < quantity_needed {
-            debug!(
-                "WAT {}, needed {} generated {}",
-                next, quantity_needed, quantity_generated
-            );
-        }
+        // Mark any extra we've generated
         *extra.entry(next.to_string()).or_insert(0) += quantity_generated - quantity_needed;
+
+        // Remove the stuff we've generated
+        needed.remove(next);
 
         for component in reaction.components.iter() {
             to_visit.push_front(&component.name);
 
+            // Pull from extra before requiring generation
             let mut component_needed = component.quantity * multiplier;
             let mut component_extra = *extra.get(&component.name).unwrap_or(&0);
             debug!("Need {}", component.name);
@@ -225,12 +208,11 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
 fn main() -> Result<()> {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let reactions = read_input("test5.txt")?;
+    let reactions = read_input("test2.txt")?;
 
     let reaction_map = build_reaction_map(&reactions);
-    //println!("{:?}", reaction_map);
 
-    println!("Lowest cost: {:?}", lowest_ore_cost_for_fuel(&reaction_map));
+    println!("Lowest cost: {}", lowest_ore_cost_for_fuel(&reaction_map));
 
     Ok(())
 }
