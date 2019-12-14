@@ -1,8 +1,9 @@
 use std::cmp::Ordering;
+use std::thread;
 
 use anyhow::Result;
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 struct Point3d {
     x: i64,
     y: i64,
@@ -21,7 +22,7 @@ impl Point3d {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 struct Moon {
     position: Point3d,
     velocity: Point3d,
@@ -68,6 +69,18 @@ impl Moon {
 
         self.velocity.z += z_delta;
         other.velocity.z -= z_delta;
+    }
+
+    fn x_equal(&self, other: &Self) -> bool {
+        self.position.x == other.position.x && self.velocity.x == other.velocity.x
+    }
+
+    fn y_equal(&self, other: &Self) -> bool {
+        self.position.y == other.position.y && self.velocity.y == other.velocity.y
+    }
+
+    fn z_equal(&self, other: &Self) -> bool {
+        self.position.z == other.position.z && self.velocity.z == other.velocity.z
     }
 
     fn apply_velocity(&mut self) {
@@ -118,19 +131,98 @@ fn step(io: &mut Moon, ganymede: &mut Moon, callisto: &mut Moon, europa: &mut Mo
 fn main() -> Result<()> {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let mut io = Moon::new(Point3d { x: -7, y: -1, z: 6 });
-    let mut ganymede = Moon::new(Point3d { x: 6, y: -9, z: -9 });
-    let mut callisto = Moon::new(Point3d {
+    let io = Moon::new(Point3d { x: -7, y: -1, z: 6 });
+    let ganymede = Moon::new(Point3d { x: 6, y: -9, z: -9 });
+    let callisto = Moon::new(Point3d {
         x: -12,
         y: 2,
         z: -7,
     });
-    let mut europa = Moon::new(Point3d {
+    let europa = Moon::new(Point3d {
         x: 4,
         y: -17,
         z: -12,
     });
 
+    let mut x_io = io.clone();
+    let mut x_ganymede = ganymede.clone();
+    let mut x_callisto = callisto.clone();
+    let mut x_europa = europa.clone();
+
+    let x_thread = thread::spawn(move || {
+        let mut counter: u64 = 0;
+        loop {
+            step(&mut x_io, &mut x_ganymede, &mut x_callisto, &mut x_europa);
+
+            counter += 1;
+
+            if counter % 1000000 == 0 {
+                println!("COUNT {} IN X", counter);
+            }
+
+            if io.x_equal(&x_ganymede) && io.x_equal(&x_callisto) && io.x_equal(&x_europa) {
+                break;
+            }
+        }
+
+        counter
+    });
+
+    let mut y_io = io.clone();
+    let mut y_ganymede = ganymede.clone();
+    let mut y_callisto = callisto.clone();
+    let mut y_europa = europa.clone();
+
+    let y_thread = thread::spawn(move || {
+        let mut counter: u64 = 0;
+        loop {
+            step(&mut y_io, &mut y_ganymede, &mut y_callisto, &mut y_europa);
+
+            counter += 1;
+
+            if counter % 1000000 == 0 {
+                println!("COUNT {} IN Y", counter);
+            }
+
+            if io.y_equal(&y_ganymede) && io.y_equal(&y_callisto) && io.y_equal(&y_europa) {
+                break;
+            }
+        }
+
+        counter
+    });
+
+    let mut z_io = io.clone();
+    let mut z_ganymede = ganymede.clone();
+    let mut z_callisto = callisto.clone();
+    let mut z_europa = europa.clone();
+
+    let z_thread = thread::spawn(move || {
+        let mut counter: u64 = 0;
+        loop {
+            step(&mut z_io, &mut z_ganymede, &mut z_callisto, &mut z_europa);
+
+            counter += 1;
+
+            if counter % 1000000 == 0 {
+                println!("COUNT {} IN Z", counter);
+            }
+
+            if io.z_equal(&z_ganymede) && io.z_equal(&z_callisto) && io.z_equal(&z_europa) {
+                break;
+            }
+        }
+
+        counter
+    });
+
+    let x_counter = x_thread.join().unwrap();
+    let y_counter = y_thread.join().unwrap();
+    let z_counter = z_thread.join().unwrap();
+
+    println!("x: {}, y: {}, z: {}", x_counter, y_counter, z_counter);
+
+    /*
     let initial_io = io.clone();
     let initial_ganymede = ganymede.clone();
     let initial_callisto = callisto.clone();
@@ -141,15 +233,6 @@ fn main() -> Result<()> {
         step(&mut io, &mut ganymede, &mut callisto, &mut europa);
 
         counter += 1;
-
-        if initial_io == io
-            && initial_ganymede == ganymede
-            && initial_callisto == callisto
-            && initial_europa == europa
-        {
-            println!("Equal after {} step(s)", counter);
-            break;
-        }
     }
 
     println!(
@@ -159,6 +242,7 @@ fn main() -> Result<()> {
             + callisto.total_energy()
             + europa.total_energy()
     );
+    */
 
     Ok(())
 }
