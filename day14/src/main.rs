@@ -140,8 +140,14 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
 
     let mut extra = BTreeMap::new();
 
-    while !to_visit.is_empty() {
-        let next = to_visit.pop_front().unwrap();
+    loop {
+        let choices: Vec<&str> = needed.keys().cloned().filter(|k| *k != "ORE").collect();
+
+        if choices.len() == 0 {
+            break;
+        }
+
+        let next = choices.into_iter().next().unwrap();
 
         if next == "ORE" {
             continue;
@@ -149,7 +155,7 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
 
         debug!("Checking {}", next);
 
-        let quantity_needed = match needed.get(next) {
+        let quantity_needed = match needed.get(&next) {
             Some(quantity) => *quantity,
             None => break,
         };
@@ -171,11 +177,9 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
         *extra.entry(next.to_string()).or_insert(0) += quantity_generated - quantity_needed;
 
         // Remove the stuff we've generated
-        needed.remove(next);
+        needed.remove(&next);
 
         for component in reaction.components.iter() {
-            to_visit.push_front(&component.name);
-
             // Pull from extra before requiring generation
             let mut component_needed = component.quantity * multiplier;
             let mut component_extra = *extra.get(&component.name).unwrap_or(&0);
@@ -201,6 +205,7 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
     }
 
     println!("EXTRA: {:?}", extra);
+    println!("NEEDED: {:?}", needed);
 
     *needed.get("ORE").unwrap()
 }
@@ -208,11 +213,59 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
 fn main() -> Result<()> {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let reactions = read_input("test2.txt")?;
+    let reactions = read_input("input.txt")?;
 
     let reaction_map = build_reaction_map(&reactions);
 
     println!("Lowest cost: {}", lowest_ore_cost_for_fuel(&reaction_map));
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_test(filename: &str) -> Result<u32> {
+        let reactions = read_input(filename)?;
+
+        let reaction_map = build_reaction_map(&reactions);
+
+        Ok(lowest_ore_cost_for_fuel(&reaction_map))
+    }
+
+    #[test]
+    fn test_1() -> Result<()> {
+        assert_eq!(run_test("test1.txt")?, 31);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_2() -> Result<()> {
+        assert_eq!(run_test("test2.txt")?, 165);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_3() -> Result<()> {
+        assert_eq!(run_test("test3.txt")?, 13312);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_4() -> Result<()> {
+        assert_eq!(run_test("test4.txt")?, 180697);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_5() -> Result<()> {
+        assert_eq!(run_test("test5.txt")?, 2210736);
+
+        Ok(())
+    }
 }
