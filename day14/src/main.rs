@@ -1,9 +1,10 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
 use anyhow::Result;
-use log::debug;
+use log::{debug, error};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -18,7 +19,7 @@ enum ParseComponentError {
 #[derive(Clone, Debug)]
 struct Component {
     name: String,
-    quantity: u32,
+    quantity: u64,
 }
 
 impl FromStr for Component {
@@ -131,12 +132,9 @@ fn build_reaction_map(reactions: &Vec<Reaction>) -> BTreeMap<String, Reaction> {
     reaction_map
 }
 
-fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
+fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>, required_fuel: u64) -> u64 {
     let mut needed = BTreeMap::new();
-    needed.insert("FUEL", 1);
-
-    let mut to_visit = VecDeque::new();
-    to_visit.push_front("FUEL");
+    needed.insert("FUEL", required_fuel);
 
     let mut extra = BTreeMap::new();
 
@@ -163,7 +161,21 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
         let reaction = reaction_map.get(next).unwrap();
 
         let output = reaction.result.quantity;
-        let multiplier = (quantity_needed as f32 / output as f32).ceil() as u32;
+
+        let mut multiplier = quantity_needed / output;
+        let remainder = quantity_needed % output;
+        if remainder > 0 {
+            multiplier += 1;
+        }
+        /*
+        debug!("NEEDED {}, OUTPUT: {}", quantity_needed, output);
+        debug!(
+            "AS F32 NEEDED {}, OUTPUT {}",
+            quantity_needed as f32, output as f32
+        );
+        debug!("DIV: {}", quantity_needed as f32 / output as f32);
+        */
+        //let multiplier = (quantity_needed as f32 / output as f32).ceil() as u64;
 
         debug!(
             "Generated {} {}, multiplier {}",
@@ -173,6 +185,12 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
         );
 
         let quantity_generated = output * multiplier;
+        if quantity_generated < quantity_needed {
+            error!(
+                "For {}: needed {}, but only generated {}",
+                next, quantity_needed, quantity_generated
+            );
+        }
         // Mark any extra we've generated
         *extra.entry(next.to_string()).or_insert(0) += quantity_generated - quantity_needed;
 
@@ -204,10 +222,26 @@ fn lowest_ore_cost_for_fuel(reaction_map: &BTreeMap<String, Reaction>) -> u32 {
         }
     }
 
-    println!("EXTRA: {:?}", extra);
-    println!("NEEDED: {:?}", needed);
-
     *needed.get("ORE").unwrap()
+}
+
+fn search(reaction_map: &BTreeMap<String, Reaction>, low: u64, high: u64) -> u64 {
+    let guess = (low + high) / 2;
+    let cost = lowest_ore_cost_for_fuel(reaction_map, guess);
+
+    if high <= low {
+        return guess;
+    }
+
+    if high - low <= 1 {
+        return guess;
+    }
+
+    match cost.cmp(&1000000000000) {
+        Ordering::Less => search(reaction_map, guess, high),
+        Ordering::Greater => search(reaction_map, low, guess),
+        Ordering::Equal => guess,
+    }
 }
 
 fn main() -> Result<()> {
@@ -217,7 +251,14 @@ fn main() -> Result<()> {
 
     let reaction_map = build_reaction_map(&reactions);
 
-    println!("Lowest cost: {}", lowest_ore_cost_for_fuel(&reaction_map));
+    let cost_for_one = lowest_ore_cost_for_fuel(&reaction_map, 1);
+
+    let estimated_top = (1000000000000 / cost_for_one) * 2;
+    let estimated_bottom = (1000000000000 / cost_for_one) / 2;
+
+    let result = search(&reaction_map, estimated_bottom, estimated_top);
+
+    println!("Fuel for one trillion: {}", result);
 
     Ok(())
 }
@@ -226,12 +267,12 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    fn run_test(filename: &str) -> Result<u32> {
+    fn run_test(filename: &str) -> Result<u64> {
         let reactions = read_input(filename)?;
 
         let reaction_map = build_reaction_map(&reactions);
 
-        Ok(lowest_ore_cost_for_fuel(&reaction_map))
+        Ok(lowest_ore_cost_for_fuel(&reaction_map, 1))
     }
 
     #[test]
