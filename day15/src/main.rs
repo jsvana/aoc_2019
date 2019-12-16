@@ -415,6 +415,58 @@ fn count_shortest_path(map: &Map, start: &Point, end: &Point) -> Option<u64> {
     scores.get(&end.as_tuple()).cloned()
 }
 
+fn visit_all(map: &mut Map, start: &Point) -> u64 {
+    let directions = vec![
+        Direction::North,
+        Direction::South,
+        Direction::East,
+        Direction::West,
+    ];
+
+    let mut scores = BTreeMap::new();
+
+    let mut visited = BTreeSet::new();
+
+    let mut to_visit = VecDeque::new();
+
+    let start_tuple = start.as_tuple();
+    to_visit.push_back(start_tuple);
+
+    scores.insert(start_tuple, 0);
+
+    let mut max_count = 0;
+
+    while !to_visit.is_empty() {
+        let next = to_visit.pop_front().unwrap();
+
+        if visited.contains(&next) {
+            continue;
+        }
+
+        visited.insert(next);
+
+        let point_score = scores.get(&next).unwrap().clone();
+
+        for direction in directions.iter() {
+            let next_point = point_in_direction(&Point::from_tuple(&next), direction);
+            if let Tile::Unknown | Tile::Wall = map.get_point(&next_point) {
+                continue;
+            }
+
+            let point_tuple = next_point.as_tuple();
+            to_visit.push_back(point_tuple);
+
+            let mut next_score = scores.get(&point_tuple).unwrap_or(&std::u64::MAX).clone();
+            next_score = min(next_score, point_score + 1);
+            max_count = max(max_count, next_score);
+
+            scores.insert(point_tuple, next_score);
+        }
+    }
+
+    max_count
+}
+
 fn main() -> Result<()> {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -431,29 +483,10 @@ fn main() -> Result<()> {
                 "Shortest_path: {}",
                 count_shortest_path(&map, &Point::zero(), &oxygen_point).unwrap()
             );
+            println!("Minutes to fill: {}", visit_all(&mut map, &oxygen_point));
         }
         None => println!("Unable to find oxygen"),
     }
-
-    /*
-    move_until_wall(&mut program, &mut robot, &mut map, &Direction::North)?;
-
-    println!("Map:\n{}", map.to_string(&robot));
-
-    let back_path = get_path(&map, &robot, &Point::zero()).unwrap();
-
-    follow_path(&mut program, &mut robot, &back_path)?;
-
-    println!("Map:\n{}", map.to_string(&robot));
-
-    // Try moving in each direction until either HitWall, FoundOxygen, or hit visited point
-    // Then reset position
-    // Add each wall/found oxygen point to map
-    //let output = program.run_to_next_output(&mut inputs)?.unwrap();
-    //println!("Output: {}", output);
-    //
-    println!("Position: {}", robot);
-    */
 
     Ok(())
 }
