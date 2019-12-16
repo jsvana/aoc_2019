@@ -209,7 +209,7 @@ fn get_path(map: &Map, start: &Point, end: &Point) -> Option<Vec<Direction>> {
     let mut to_visit = VecDeque::new();
     let mut paths = VecDeque::new();
 
-    to_visit.push_back((start.x, start.y));
+    to_visit.push_back(start.as_tuple());
     paths.push_back(Vec::new());
 
     let end_tuple = end.as_tuple();
@@ -275,17 +275,12 @@ fn follow_path(program: &mut Program, robot: &mut Point, path: &Vec<Direction>) 
     Ok(())
 }
 
-enum ExploreResult {
-    Moved,
-    DidNotMove,
-}
-
 fn move_once_in_direction(
     program: &mut Program,
     robot: &mut Point,
     map: &mut Map,
     direction: &Direction,
-) -> Result<ExploreResult> {
+) -> Result<MoveResult> {
     let mut inputs = VecDeque::new();
     inputs.push_back(direction.into());
     let output = program.run_to_next_output(&mut inputs)?.unwrap();
@@ -296,22 +291,21 @@ fn move_once_in_direction(
         MoveResult::HitWall => {
             // Set this one more in the direction
             map.set_point(&point_in_direction(&robot, direction), &Tile::Wall);
-            Ok(ExploreResult::DidNotMove)
         }
         MoveResult::MovedOneStep => {
             move_robot(robot, &direction);
             map.set_point(&robot, &Tile::Floor);
-            Ok(ExploreResult::Moved)
         }
         MoveResult::MovedOneStepAndFoundOxygen => {
             move_robot(robot, &direction);
             map.set_point(&robot, &Tile::Oxygen);
-            Ok(ExploreResult::Moved)
         }
     }
+
+    Ok(move_result)
 }
 
-fn populate_map(program: &mut Program, map: &mut Map, start: &Point) -> Result<()> {
+fn populate_map(program: &mut Program, map: &mut Map, start: &Point) -> Result<Option<Point>> {
     let directions = vec![
         Direction::North,
         Direction::South,
@@ -325,7 +319,10 @@ fn populate_map(program: &mut Program, map: &mut Map, start: &Point) -> Result<(
 
     for direction in directions.iter() {
         to_visit.push_front((start.x, start.y, direction));
+        //to_visit.push_back((start.x, start.y, direction));
     }
+
+    let mut oxygen_point = None;
 
     let mut previous_point = start.clone();
     while !to_visit.is_empty() {
@@ -335,7 +332,7 @@ fn populate_map(program: &mut Program, map: &mut Map, start: &Point) -> Result<(
             continue;
         }
 
-        println!("\x1B[2J{}", map.to_string(&previous_point));
+        //println!("\x1B[2J{}", map.to_string(&previous_point));
 
         visited.insert(next);
 
@@ -353,19 +350,69 @@ fn populate_map(program: &mut Program, map: &mut Map, start: &Point) -> Result<(
         follow_path(program, &mut previous_point, &back_path)?;
 
         let next_direction = next.2;
-        if let ExploreResult::Moved =
-            move_once_in_direction(program, &mut point, map, &next_direction)?
-        {
+        let result = move_once_in_direction(program, &mut point, map, &next_direction)?;
+        if let MoveResult::MovedOneStep | MoveResult::MovedOneStepAndFoundOxygen = result {
             previous_point = point.clone();
-            //let next_point = point_in_direction(&point, &next_direction);
+
+            if let MoveResult::MovedOneStepAndFoundOxygen = result {
+                oxygen_point = Some(point.clone());
+            }
 
             for direction in directions.iter() {
                 to_visit.push_front((point.x, point.y, direction));
+                //to_visit.push_back((point.x, point.y, direction));
             }
         }
     }
 
-    Ok(())
+    Ok(oxygen_point)
+}
+
+fn count_shortest_path(map: &Map, start: &Point, end: &Point) -> Option<u64> {
+    let directions = vec![
+        Direction::North,
+        Direction::South,
+        Direction::East,
+        Direction::West,
+    ];
+
+    let mut scores = BTreeMap::new();
+
+    let mut visited = BTreeSet::new();
+
+    let mut to_visit = VecDeque::new();
+
+    let start_tuple = start.as_tuple();
+    to_visit.push_back(start_tuple);
+
+    scores.insert(start_tuple, 0);
+
+    while !to_visit.is_empty() {
+        let next = to_visit.pop_front().unwrap();
+
+        if visited.contains(&next) {
+            continue;
+        }
+
+        visited.insert(next);
+
+        let point_score = scores.get(&next).unwrap().clone();
+
+        for direction in directions.iter() {
+            let next_point = point_in_direction(&Point::from_tuple(&next), direction);
+            if let Tile::Unknown | Tile::Wall = map.get_point(&next_point) {
+                continue;
+            }
+
+            let point_tuple = next_point.as_tuple();
+            to_visit.push_back(point_tuple);
+
+            let next_score = scores.get(&point_tuple).unwrap_or(&std::u64::MAX).clone();
+            scores.insert(point_tuple, min(next_score, point_score + 1));
+        }
+    }
+
+    scores.get(&end.as_tuple()).cloned()
 }
 
 fn main() -> Result<()> {
@@ -377,7 +424,16 @@ fn main() -> Result<()> {
 
     let mut program = Program::from_file("input.txt")?;
 
-    populate_map(&mut program, &mut map, &robot)?;
+    match populate_map(&mut program, &mut map, &robot)? {
+        Some(oxygen_point) => {
+            println!("Found oxygen at {}", oxygen_point);
+            println!(
+                "Shortest_path: {}",
+                count_shortest_path(&map, &Point::zero(), &oxygen_point).unwrap()
+            );
+        }
+        None => println!("Unable to find oxygen"),
+    }
 
     /*
     move_until_wall(&mut program, &mut robot, &mut map, &Direction::North)?;
