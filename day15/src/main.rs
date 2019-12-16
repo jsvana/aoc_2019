@@ -4,9 +4,10 @@ mod point;
 use std::cmp::{max, min};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::convert::{TryFrom, TryInto};
+use std::fmt;
 
 use anyhow::{format_err, Error, Result};
-use log::{debug, error};
+use log::debug;
 
 use intcode::Program;
 use point::Point;
@@ -101,12 +102,27 @@ impl Into<char> for Tile {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
 enum Direction {
     North,
     South,
     West,
     East,
+}
+
+impl fmt::Display for Direction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Direction::North => "north",
+                Direction::South => "south",
+                Direction::West => "west",
+                Direction::East => "east",
+            }
+        )
+    }
 }
 
 impl Into<i64> for Direction {
@@ -180,54 +196,6 @@ fn move_robot(robot: &mut Point, direction: &Direction) {
     }
 }
 
-fn move_until_wall(
-    program: &mut Program,
-    robot: &mut Point,
-    map: &mut Map,
-    direction: &Direction,
-) -> Result<()> {
-    loop {
-        let mut inputs = VecDeque::new();
-        inputs.push_back(direction.into());
-        let output = program.run_to_next_output(&mut inputs)?.unwrap();
-
-        let move_result: MoveResult = output.try_into()?;
-
-        match move_result {
-            MoveResult::HitWall => {
-                // Set this one more in the direction
-                map.set_point(&point_in_direction(&robot, direction), &Tile::Wall);
-                break;
-            }
-            MoveResult::MovedOneStep => {
-                move_robot(robot, &direction);
-                map.set_point(&robot, &Tile::Floor)
-            }
-            MoveResult::MovedOneStepAndFoundOxygen => {
-                move_robot(robot, &direction);
-                map.set_point(&robot, &Tile::Oxygen)
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn get_surrounding_points(map: &Map, point: &Point) -> Vec<Point> {
-    let mut points = Vec::new();
-
-    for direction in vec![
-        Direction::North,
-        Direction::South,
-        Direction::East,
-        Direction::West,
-    ]
-    .iter()
-    {}
-
-    points
-}
-
 fn get_path(map: &Map, start: &Point, end: &Point) -> Option<Vec<Direction>> {
     let directions = vec![
         Direction::North,
@@ -236,13 +204,10 @@ fn get_path(map: &Map, start: &Point, end: &Point) -> Option<Vec<Direction>> {
         Direction::West,
     ];
 
-    let mut scores = BTreeMap::new();
     let mut visited = BTreeSet::new();
 
     let mut to_visit = VecDeque::new();
     let mut paths = VecDeque::new();
-
-    scores.insert((start.x, start.y), 0);
 
     to_visit.push_back((start.x, start.y));
     paths.push_back(Vec::new());
@@ -258,10 +223,6 @@ fn get_path(map: &Map, start: &Point, end: &Point) -> Option<Vec<Direction>> {
         }
 
         visited.insert(next);
-
-        let score = scores.get(&next).cloned().unwrap();
-
-        debug!("Checking {:?} with score {}", next, score);
 
         if next == end_tuple {
             return Some(next_path);
@@ -280,14 +241,6 @@ fn get_path(map: &Map, start: &Point, end: &Point) -> Option<Vec<Direction>> {
             to_visit.push_back(point_tuple);
 
             paths.push_back(further_path);
-
-            scores.insert(
-                point_tuple,
-                min(
-                    score + 1,
-                    *scores.get(&point_tuple).unwrap_or(&std::u64::MAX),
-                ),
-            );
         }
     }
 
@@ -322,15 +275,111 @@ fn follow_path(program: &mut Program, robot: &mut Point, path: &Vec<Direction>) 
     Ok(())
 }
 
+enum ExploreResult {
+    Moved,
+    DidNotMove,
+}
+
+fn move_once_in_direction(
+    program: &mut Program,
+    robot: &mut Point,
+    map: &mut Map,
+    direction: &Direction,
+) -> Result<ExploreResult> {
+    let mut inputs = VecDeque::new();
+    inputs.push_back(direction.into());
+    let output = program.run_to_next_output(&mut inputs)?.unwrap();
+
+    let move_result: MoveResult = output.try_into()?;
+
+    match move_result {
+        MoveResult::HitWall => {
+            // Set this one more in the direction
+            map.set_point(&point_in_direction(&robot, direction), &Tile::Wall);
+            Ok(ExploreResult::DidNotMove)
+        }
+        MoveResult::MovedOneStep => {
+            move_robot(robot, &direction);
+            map.set_point(&robot, &Tile::Floor);
+            Ok(ExploreResult::Moved)
+        }
+        MoveResult::MovedOneStepAndFoundOxygen => {
+            move_robot(robot, &direction);
+            map.set_point(&robot, &Tile::Oxygen);
+            Ok(ExploreResult::Moved)
+        }
+    }
+}
+
+fn populate_map(program: &mut Program, map: &mut Map, start: &Point) -> Result<()> {
+    let directions = vec![
+        Direction::North,
+        Direction::South,
+        Direction::East,
+        Direction::West,
+    ];
+
+    let mut visited = BTreeSet::new();
+
+    let mut to_visit = VecDeque::new();
+
+    for direction in directions.iter() {
+        to_visit.push_front((start.x, start.y, direction));
+    }
+
+    let mut previous_point = start.clone();
+    while !to_visit.is_empty() {
+        let next = to_visit.pop_front().unwrap();
+
+        if visited.contains(&next) {
+            continue;
+        }
+
+        println!("\x1B[2J{}", map.to_string(&previous_point));
+
+        visited.insert(next);
+
+        let mut point = Point {
+            x: next.0,
+            y: next.1,
+        };
+
+        // Navigate to the next point
+        let back_path = get_path(&map, &previous_point, &point).ok_or(format_err!(
+            "Unable to find path from {} to {}",
+            previous_point,
+            point
+        ))?;
+        follow_path(program, &mut previous_point, &back_path)?;
+
+        let next_direction = next.2;
+        if let ExploreResult::Moved =
+            move_once_in_direction(program, &mut point, map, &next_direction)?
+        {
+            previous_point = point.clone();
+            //let next_point = point_in_direction(&point, &next_direction);
+
+            for direction in directions.iter() {
+                to_visit.push_front((point.x, point.y, direction));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let mut map = Map::new();
-    let mut robot = Point::zero();
+    let robot = Point::zero();
     map.set_point(&robot, &Tile::Floor);
 
     let mut program = Program::from_file("input.txt")?;
 
+    populate_map(&mut program, &mut map, &robot)?;
+
+    /*
     move_until_wall(&mut program, &mut robot, &mut map, &Direction::North)?;
 
     println!("Map:\n{}", map.to_string(&robot));
@@ -348,6 +397,7 @@ fn main() -> Result<()> {
     //println!("Output: {}", output);
     //
     println!("Position: {}", robot);
+    */
 
     Ok(())
 }

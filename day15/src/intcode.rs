@@ -4,7 +4,7 @@ use std::convert::{TryFrom, TryInto};
 use std::str::FromStr;
 
 use anyhow::{format_err, Context, Error, Result};
-use log::{debug, info, trace};
+use log::{trace};
 
 #[derive(Debug)]
 enum OpCode {
@@ -317,7 +317,6 @@ impl Instruction {
                 let result_offset = self.get_argument_value_for_set(tape, 0)?;
 
                 trace!("[INP] {} -> [{}]", value, result_offset);
-                info!("[INP] {} -> [{}]", value, result_offset);
 
                 tape.set(result_offset as usize, value).with_context(|| {
                     format!(
@@ -488,7 +487,7 @@ impl Program {
             instruction_count += 1;
         }
 
-        debug!("Ran {} instruction(s)", instruction_count);
+        trace!("Ran {} instruction(s)", instruction_count);
 
         Ok(outputs.back().cloned())
     }
@@ -527,7 +526,7 @@ impl Program {
             instruction_count += 1;
         }
 
-        debug!("Ran {} instruction(s)", instruction_count);
+        trace!("Ran {} instruction(s)", instruction_count);
 
         Ok(outputs.clone())
     }
